@@ -82,6 +82,19 @@ class Util
     }
 
     /**
+     * Return a copy of $url with the value of the `apikey` query parameter
+     * replaced by `REDACTED`, for safe logging.
+     *
+     * @param string $url
+     *
+     * @return string
+     */
+    public static function redactApiKey(string $url): string
+    {
+        return (string) preg_replace('/(apikey=)[^&]*/i', '$1REDACTED', $url);
+    }
+
+    /**
      * @param array $params
      *
      * @return string

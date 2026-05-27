@@ -1,281 +1,282 @@
 <?php
+
 declare(strict_types=1);
 
 namespace NewsdataIO;
 
-class NewsdataApiBase {
+use NewsdataIO\Exception\NewsdataAPIError;
+use NewsdataIO\Exception\NewsdataAuthError;
+use NewsdataIO\Exception\NewsdataException;
+use NewsdataIO\Exception\NewsdataNetworkError;
+use NewsdataIO\Exception\NewsdataRateLimitError;
+use NewsdataIO\Exception\NewsdataServerError;
 
-    /**
-     * Newsdata API Host
-     *
-     * @var string
-     */
-    private const API_HOST          =   'https://newsdata.io/';
+/**
+ * Transport layer for the Newsdata.io client.
+ *
+ * Owns the HTTP concerns: validating parameters, building the request URL,
+ * executing it with retries and exponential backoff, parsing the response,
+ * and mapping failures onto the typed exception hierarchy. The public
+ * endpoint methods live in {@see NewsdataApi}.
+ */
+class NewsdataApiBase
+{
+    /** @var string */
+    protected $apiKey;
 
-    /**
-     * Bytesview API Base Path
-     *
-     * @var string
-     */
-    private const API_BASE_PATH     =   'api/';
+    /** @var Response Details of the most recent request. */
+    protected $response;
 
-    /**
-     * Current Version of Bytesview API
-     *
-     * @var string
-     */
-    private const API_VERSION       =   '1';
+    /** @var int Seconds to wait for a complete response. */
+    protected $timeout = Constants::DEFAULT_REQUEST_TIMEOUT;
 
-    /**
-     * Response details about the result of the last request
-     *
-     * @var Object
-     */
-    private $response;
+    /** @var int Seconds to wait while connecting. */
+    protected $connectionTimeout = Constants::DEFAULT_CONNECT_TIMEOUT;
 
-    /**
-     * Number of attempts we made for the request
-     *
-     * @var int
-     */
-    private $attempts = 0;
+    /** @var int Total request attempts (1 = no retry). */
+    protected $maxRetries = Constants::DEFAULT_MAX_RETRIES;
 
-    /**
-     * How long to wait for a response from the API
-     * @var int
-     */
-    protected $timeout = 60;
+    /** @var float Base seconds for exponential backoff. */
+    protected $retryBackoff = Constants::DEFAULT_RETRY_BACKOFF;
 
-    /**
-     * How long to wait while connecting to the API
-     * @var int
-     */
-    protected $connectionTimeout = 120;
+    /** @var float Cap on a single backoff sleep, in seconds. */
+    protected $retryBackoffMax = Constants::DEFAULT_RETRY_BACKOFF_MAX;
 
-    /**
-     * How many times we retry request when API is down
-     * @var int
-     */
-    protected $maxRetries = 0;
-
-    /**
-     * Delay in seconds before we retry the request
-     * @var int
-     */
-    protected $retriesDelay = 1;
-
-    /**
-     * Decode JSON Response as associative Array
-     * @var bool
-     */
+    /** @var bool Decode JSON responses as associative arrays. */
     protected $decodeJsonAsArray = false;
 
-    /**
-     * Store proxy connection details
-     * @var array
-     */
+    /** @var array cURL proxy configuration. */
     protected $proxy = [];
 
-    public function __construct()
-    {
-        $this->_resetLastResponse();
-    }
+    /** @var \Psr\Log\LoggerInterface|null Optional PSR-3 logger. */
+    protected $logger;
 
-    private function _resetLastResponse(): void
+    /**
+     * @param string $apiKey
+     */
+    public function __construct(string $apiKey)
     {
+        if ($apiKey === '') {
+            throw new Exception\NewsdataValidationError('apikey must be a non-empty string', 'apikey');
+        }
+        $this->apiKey = $apiKey;
         $this->response = new Response();
     }
 
-    private function _getLastHttpCode(): int
-    {
-        return $this->response->getHttpCode();
-    }
-
     /**
-     * Delays the retries when they're activated.
+     * Metadata (status code, headers) of the most recent request.
      */
-    private function _sleepIfNeeded(): void
+    public function getLastResponse(): Response
     {
-        if ($this->maxRetries && $this->attempts) {
-            sleep($this->retriesDelay);
-        }
+        return $this->response;
     }
 
     /**
-     * Decodes a JSON string to stdObject or associative array
+     * Validate parameters and execute a request against the named endpoint.
      *
-     * @param string $string
-     * @param bool   $asArray
+     * @param string $endpoint One of {@see Constants::ENDPOINTS}.
+     * @param array  $data      Raw user parameters.
+     *
+     * @return array|object Decoded response body.
+     */
+    protected function request(string $endpoint, array $data)
+    {
+        if (!isset(Constants::ENDPOINTS[$endpoint])) {
+            throw new Exception\NewsdataValidationError("Unknown endpoint: {$endpoint}");
+        }
+        $params = ParamValidator::validate($endpoint, $data);
+        $baseUrl = Constants::BASE_URL . Constants::ENDPOINTS[$endpoint];
+        return $this->execute($baseUrl, $params);
+    }
+
+    /**
+     * Execute a single GET with retries and backoff.
+     *
+     * @param string                $baseUrl
+     * @param array<string,string>  $params  Validated, url-encodable params.
      *
      * @return array|object
      */
-    private function _j_decode(string $string, bool $asArray)
+    private function execute(string $baseUrl, array $params)
     {
-        if (
-            version_compare(PHP_VERSION, '5.4.0', '>=') &&
-            !(defined('JSON_C_VERSION') && PHP_INT_SIZE > 4)
-            ) {
-                return json_decode($string, $asArray, 512, JSON_BIGINT_AS_STRING);
+        $this->response = new Response();
+        $this->response->setApiPath($baseUrl);
+
+        $query = Util::buildHttpQuery($params);
+        $fullUrl = $baseUrl . '?apikey=' . rawurlencode($this->apiKey)
+            . ($query !== '' ? '&' . $query : '');
+        $logUrl = Util::redactApiKey($fullUrl);
+
+        $attempts = max(1, $this->maxRetries);
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            $this->log('info', "GET {$logUrl} (attempt {$attempt}/{$attempts})");
+
+            try {
+                [$status, $headers, $rawBody] = $this->httpGet($fullUrl);
+            } catch (NewsdataNetworkError $e) {
+                if ($attempt >= $attempts) {
+                    throw $e;
+                }
+                $this->log('warning', "network error: {$e->getMessage()}");
+                $this->sleepSeconds($this->backoff($attempt));
+                continue;
             }
 
-            return json_decode($string, $asArray);
-    }
+            $this->response->setHttpCode($status);
+            $this->response->setHeaders($headers);
 
-    /**
-     * Resets the attempts number.
-     *
-     */
-    private function _resetAttemptsNumber(): void
-    {
-        $this->attempts = 0;
-    }
-
-    /**
-     * Checks if we have to retry request if API is down.
-     *
-     * @return bool
-     */
-    private function _requestsAvailable(): bool
-    {
-        return $this->maxRetries && $this->attempts <= $this->maxRetries && $this->_getLastHttpCode() >= 500;
-    }
-
-    /**
-     *
-     * Make requests and retry them (if enabled) in case of BytesviewAPI problems.
-     *
-     * @param string $method
-     * @param string $url
-     * @param string $method
-     * @param array  $parameters
-     * @param bool   $json
-     *
-     * @return array|object
-     */
-    private function _makeRequests(string $url, string $method, array $parameters,string $api_key,bool $json) {
-        do {
-            $this->_sleepIfNeeded();
-            $result = $this->_request($url, $method, $parameters,$api_key, $json);
-            $response = $this->_j_decode($result, $this->decodeJsonAsArray);
-            $this->response->setBody($response);
-            $this->attempts++;
-
-            // Retry up to our $maxRetries number if we get errors greater than 500 (over capacity etc)
-
-        }while ($this->_requestsAvailable());
-
-        return $response;
-    }
-
-    /**
-     * Make an HTTP request
-     *
-     * @param string $url
-     * @param string $method
-     * @param string $authorization
-     * @param array $postfields
-     * @param bool $json
-     *
-     * @return string
-     * @throws BytesviewAPIException
-     */
-    private function _request(string $url, string $method, array $postfields,string $api_key, bool $json = false): string
-    {
-        $options                        =   $this->_curlOptions();
-        $options[CURLOPT_URL]           =   $url . "?apikey=". $api_key;
-        $options[CURLOPT_HTTPHEADER]    =   ['Accept: application/json'];
-
-        switch ($method) {
-            case 'GET':
-                break;
-            case 'POST':
-                $options[CURLOPT_POST] = true;
-                if ($json) {
-                    $options[CURLOPT_HTTPHEADER][]  =   'Content-type: application/json';
-                    $options[CURLOPT_POSTFIELDS]    =   json_encode($postfields);
-                } else {
-                    $options[CURLOPT_POSTFIELDS]    =   Util::buildHttpQuery($postfields,);
+            $body = $this->jsonDecode($rawBody);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                if ($status >= 500 && $attempt < $attempts) {
+                    $this->log('warning', "non-JSON response (status {$status})");
+                    $this->sleepSeconds($this->backoff($attempt));
+                    continue;
                 }
-                break;
-            case 'DELETE':
-                $options[CURLOPT_CUSTOMREQUEST]     =   'DELETE';
-                break;
-            case 'PUT':
-                $options[CURLOPT_CUSTOMREQUEST]     =   'PUT';
-                break;
+                throw new NewsdataAPIError(
+                    "Non-JSON response from API (status {$status})",
+                    $status
+                );
+            }
+            $this->response->setBody($body);
+
+            if ($status === 200 && $this->isSuccessBody($body)) {
+                return $body;
+            }
+
+            if ($status === 429) {
+                $retryAfter = $this->parseRetryAfter(
+                    isset($headers['retry_after']) ? $headers['retry_after'] : null
+                );
+                if ($attempt >= $attempts) {
+                    throw new NewsdataRateLimitError(
+                        $this->errorMessage($body, $status),
+                        429,
+                        $this->toArray($body),
+                        $retryAfter
+                    );
+                }
+                $sleep = $retryAfter !== null ? (float) $retryAfter : $this->backoff($attempt);
+                $this->log('warning', "429 rate limit; sleeping {$sleep}s");
+                $this->sleepSeconds($sleep);
+                continue;
+            }
+
+            if ($status >= 500) {
+                if ($attempt >= $attempts) {
+                    throw new NewsdataServerError(
+                        $this->errorMessage($body, $status),
+                        $status,
+                        $this->toArray($body)
+                    );
+                }
+                $this->log('warning', "{$status} server error");
+                $this->sleepSeconds($this->backoff($attempt));
+                continue;
+            }
+
+            if ($status === 401 || $status === 403) {
+                throw new NewsdataAuthError(
+                    $this->errorMessage($body, $status),
+                    $status,
+                    $this->toArray($body)
+                );
+            }
+
+            // Any other 4xx — never retried.
+            throw new NewsdataAPIError(
+                $this->errorMessage($body, $status),
+                $status,
+                $this->toArray($body)
+            );
         }
 
-        if (in_array($method, ['GET', 'PUT', 'DELETE']) && !empty($postfields) ) {
-            $options[CURLOPT_URL]   .=  '&' . Util::buildHttpQuery($postfields);
-        }
-
-        $curlHandle     =   curl_init();
-        curl_setopt_array($curlHandle, $options);
-
-        $response       =   curl_exec($curlHandle);
-
-        // Throw exceptions on cURL errors.
-        if (curl_errno($curlHandle) > 0) {
-            $error      =   curl_error($curlHandle);
-            $errorNo    =   curl_errno($curlHandle);
-            curl_close($curlHandle);
-            throw new NewsdataAPIException($error, $errorNo);
-        }
-
-        $this->response->setHttpCode( curl_getinfo($curlHandle, CURLINFO_HTTP_CODE));
-
-        $parts          =   explode("\r\n\r\n", $response);
-        $responseBody   =   array_pop($parts);
-        $responseHeader =   array_pop($parts);
-        $this->response->setHeaders($this->_parseHeaders($responseHeader));
-
-        curl_close($curlHandle);
-
-        return $responseBody;
+        // Defensive: the loop always returns or throws above.
+        throw new NewsdataException(
+            "Request to {$baseUrl} did not complete (maxRetries={$this->maxRetries})"
+        );
     }
 
     /**
-     * Set Curl options.
+     * Perform one cURL GET.
+     *
+     * @param string $url
+     *
+     * @return array{0:int,1:array,2:string} [status, headers, body]
+     *
+     * @throws NewsdataNetworkError
+     */
+    private function httpGet(string $url): array
+    {
+        $ch = curl_init();
+        curl_setopt_array($ch, $this->curlOptions($url));
+
+        $raw = curl_exec($ch);
+
+        if ($raw === false || curl_errno($ch) > 0) {
+            $errNo = curl_errno($ch);
+            $errMsg = curl_error($ch);
+            curl_close($ch);
+            throw new NewsdataNetworkError(
+                "cURL error ({$errNo}): {$errMsg}",
+                $errNo
+            );
+        }
+
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        curl_close($ch);
+
+        $rawHeaders = substr((string) $raw, 0, $headerSize);
+        $body = substr((string) $raw, $headerSize);
+
+        return [$status, $this->parseHeaders($rawHeaders), $body];
+    }
+
+    /**
+     * @param string $url
      *
      * @return array
      */
-    private function _curlOptions(): array
+    private function curlOptions(string $url): array
     {
         $options = [
-            CURLOPT_CONNECTTIMEOUT  =>  $this->connectionTimeout,
-            CURLOPT_HEADER          =>  true,
-            CURLOPT_RETURNTRANSFER  =>  true,
-            CURLOPT_SSL_VERIFYHOST  =>  2,
-            CURLOPT_SSL_VERIFYPEER  =>  true,
-            CURLOPT_TIMEOUT         =>  $this->timeout,
+            CURLOPT_URL            => $url,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+            CURLOPT_CONNECTTIMEOUT => $this->connectionTimeout,
+            CURLOPT_TIMEOUT        => $this->timeout,
+            CURLOPT_HEADER         => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_ENCODING       => '',
         ];
 
         if (!empty($this->proxy)) {
-            $options[CURLOPT_PROXY]         =   $this->proxy['CURLOPT_PROXY'];
-            $options[CURLOPT_PROXYUSERPWD]  =   $this->proxy['CURLOPT_PROXYUSERPWD'];
-            $options[CURLOPT_PROXYPORT]     =   $this->proxy['CURLOPT_PROXYPORT'];
-            $options[CURLOPT_PROXYAUTH]     =   CURLAUTH_BASIC;
-            $options[CURLOPT_PROXYTYPE]     =   CURLPROXY_HTTP;
+            $options[CURLOPT_PROXY]        = $this->proxy['CURLOPT_PROXY'] ?? '';
+            $options[CURLOPT_PROXYUSERPWD] = $this->proxy['CURLOPT_PROXYUSERPWD'] ?? '';
+            $options[CURLOPT_PROXYPORT]    = $this->proxy['CURLOPT_PROXYPORT'] ?? 0;
+            $options[CURLOPT_PROXYAUTH]    = CURLAUTH_BASIC;
+            $options[CURLOPT_PROXYTYPE]    = CURLPROXY_HTTP;
         }
 
         return $options;
     }
 
-
     /**
-     * Get the header info to store.
+     * Parse a raw header block into a lowercase, underscore-keyed map.
      *
      * @param string $header
      *
      * @return array
      */
-    private function _parseHeaders(string $header): array
+    private function parseHeaders(string $header): array
     {
         $headers = [];
         foreach (explode("\r\n", $header) as $line) {
             if (strpos($line, ':') !== false) {
-                [$key, $value] = explode(': ', $line);
-                $key = str_replace('-', '_', strtolower($key));
+                [$key, $value] = explode(':', $line, 2);
+                $key = str_replace('-', '_', strtolower(trim($key)));
                 $headers[$key] = trim($value);
             }
         }
@@ -283,29 +284,128 @@ class NewsdataApiBase {
     }
 
     /**
-     * @param string $method
-     * @param string $host
-     * @param string $path
-     * @param array  $parameters
-     * @param bool   $json
+     * @param string $json
      *
-     * @return array|object
+     * @return array|object|null
      */
-    protected function http( string $method,string $url, array $parameters, string $api_key,bool $json ) {
-        $this->_resetLastResponse();
-        $this->_resetAttemptsNumber();
-        $this->response->setApiPath($url);
-        return $this->_makeRequests($url, $method, $parameters,$api_key,$json);
+    private function jsonDecode(string $json)
+    {
+        if (
+            version_compare(PHP_VERSION, '5.4.0', '>=')
+            && !(defined('JSON_C_VERSION') && PHP_INT_SIZE > 4)
+        ) {
+            return json_decode($json, $this->decodeJsonAsArray, 512, JSON_BIGINT_AS_STRING);
+        }
+        return json_decode($json, $this->decodeJsonAsArray);
     }
 
     /**
-     * Add API Endpoint to Base URL
-     * @return string
+     * A successful payload is HTTP 200 with status="success" and non-null
+     * results, in either array or object decode mode.
+     *
+     * @param mixed $body
      */
-    protected function EndpointInURL($point):string
+    private function isSuccessBody($body): bool
     {
-        return self::API_HOST.self::API_BASE_PATH.self::API_VERSION.'/'.$point;
+        if (is_array($body)) {
+            return ($body['status'] ?? null) === 'success'
+                && array_key_exists('results', $body)
+                && $body['results'] !== null;
+        }
+        if ($body instanceof \stdClass) {
+            return isset($body->status) && $body->status === 'success'
+                && property_exists($body, 'results') && $body->results !== null;
+        }
+        return false;
     }
 
+    /**
+     * @param mixed $body
+     *
+     * @return array|null
+     */
+    private function toArray($body): ?array
+    {
+        if (is_array($body)) {
+            return $body;
+        }
+        if ($body instanceof \stdClass) {
+            $decoded = json_decode((string) json_encode($body), true);
+            return is_array($decoded) ? $decoded : null;
+        }
+        return null;
+    }
 
+    /**
+     * Extract a human-readable error message from an API error body.
+     *
+     * @param mixed $body
+     * @param int   $status
+     */
+    private function errorMessage($body, int $status): string
+    {
+        $arr = $this->toArray($body);
+        if (is_array($arr)) {
+            if (isset($arr['results']['message'])) {
+                return (string) $arr['results']['message'];
+            }
+            if (isset($arr['message'])) {
+                return (string) $arr['message'];
+            }
+        }
+        return "API request failed with HTTP {$status}";
+    }
+
+    /**
+     * Parse a Retry-After header (integer seconds or HTTP-date) into seconds.
+     *
+     * @param string|null $value
+     *
+     * @return int|null
+     */
+    private function parseRetryAfter(?string $value): ?int
+    {
+        if ($value === null) {
+            return null;
+        }
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+        if (ctype_digit($value)) {
+            return max(0, (int) $value);
+        }
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return null;
+        }
+        return max(0, $timestamp - time());
+    }
+
+    /**
+     * Exponential backoff for the given attempt, capped at the configured max.
+     */
+    private function backoff(int $attempt): float
+    {
+        $delay = $this->retryBackoff * (2 ** ($attempt - 1));
+        return min($delay, $this->retryBackoffMax);
+    }
+
+    private function sleepSeconds(float $seconds): void
+    {
+        if ($seconds > 0) {
+            usleep((int) round($seconds * 1000000));
+        }
+    }
+
+    /**
+     * @param string $level   PSR-3 log level.
+     * @param string $message
+     */
+    private function log(string $level, string $message): void
+    {
+        if ($this->logger !== null) {
+            $this->logger->log($level, '[newsdataapi] ' . $message);
+        }
+    }
 }

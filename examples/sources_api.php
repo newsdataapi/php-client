@@ -1,17 +1,22 @@
 <?php
-require_once '../autoload.php';
-require_once 'config.php';
+
+require_once __DIR__ . '/../autoload.php';
+require_once __DIR__ . '/config.php';
 
 use NewsdataIO\NewsdataApi;
+use NewsdataIO\Exception\NewsdataException;
 
 $newsdataApiObj = new NewsdataApi(NEWSDATA_API_KEY);
 
-$data = array(
-                "country"   =>  "us",
-                "language"  =>  "en",
-                "category"  =>  "business"
-            );
+$data = [
+    'country'  => 'us',
+    'language' => 'en',
+    'category' => 'business',
+];
 
-$response = $newsdataApiObj->news_sources($data);
-
-var_dump($response);
+try {
+    $response = $newsdataApiObj->news_sources($data);
+    var_dump($response);
+} catch (NewsdataException $e) {
+    echo 'Request failed: ' . $e->getMessage() . PHP_EOL;
+}

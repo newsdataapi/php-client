@@ -1,7 +1,4 @@
-<?php 
+<?php
 
-//GET THE API KEY FROM https://newsdata.io
-
-define('NEWSDATA_API_KEY','')
-
-?>
+// Get your API key from https://newsdata.io
+define('NEWSDATA_API_KEY', '');

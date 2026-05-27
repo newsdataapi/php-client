@@ -84,6 +84,16 @@ class Response
     /**
      * @return array
      */
+    public function getHeaders(): array
+    {
+        return $this->headers;
+    }
+
+    /**
+     * @deprecated Use getHeaders() instead.
+     *
+     * @return array
+     */
     public function getsHeaders(): array
     {
         return $this->headers;
