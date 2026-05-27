@@ -1,7 +1,7 @@
 {
   "name": "newsdataio/newsdataapi",
   "type": "library",
-  "description": "The official PHP client for the Newsdata.io REST API.",
+  "description": "Official PHP client (SDK) for the Newsdata.io News API — fetch real-time, historical, crypto, and stock-market news via REST with validation, retries, and error handling.",
   "keywords": ["news", "newsdata", "latest", "archive", "crypto", "market", "sources", "count", "historical", "api", "sdk"],
   "license": "MIT",
   "homepage": "https://newsdata.io",
