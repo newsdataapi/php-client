@@ -48,7 +48,7 @@ final class ParamValidator
         }
 
         // raw_query is mutually exclusive with every other parameter.
-        if (isset($params['raw_query']) && $params['raw_query'] !== null) {
+        if (isset($params['raw_query'])) {
             $conflicting = [];
             foreach ($params as $key => $value) {
                 if ($key !== 'raw_query' && $value !== null) {
@@ -69,7 +69,7 @@ final class ParamValidator
         // Count endpoints require an explicit date range.
         if (in_array($endpoint, Constants::REQUIRES_DATE_RANGE, true)) {
             foreach (['from_date', 'to_date'] as $required) {
-                if (!isset($params[$required]) || $params[$required] === null || $params[$required] === '') {
+                if (!isset($params[$required]) || $params[$required] === '') {
                     throw new NewsdataValidationError(
                         "{$required} is required for the {$endpoint} endpoint",
                         $required
@@ -81,8 +81,8 @@ final class ParamValidator
         self::checkMutex($params);
 
         if (
-            isset($params['sentiment_score']) && $params['sentiment_score'] !== null
-            && (!isset($params['sentiment']) || $params['sentiment'] === null)
+            isset($params['sentiment_score'])
+            && (!isset($params['sentiment']))
         ) {
             throw new NewsdataValidationError(
                 'sentiment_score requires sentiment to be set',
@@ -117,7 +117,7 @@ final class ParamValidator
         foreach (Constants::MUTEX_GROUPS as $group) {
             $set = [];
             foreach ($group as $name) {
-                if (isset($params[$name]) && $params[$name] !== null) {
+                if (isset($params[$name])) {
                     $set[] = $name;
                 }
             }
@@ -291,7 +291,7 @@ final class ParamValidator
             if (is_array($value)) {
                 $value = implode(',', array_map('strval', $value));
             }
-            if ($value === '' || $value === null) {
+            if ($value === '') {
                 throw new NewsdataValidationError(
                     "Parameter {$key} in raw_query must have a value",
                     (string) $key

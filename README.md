@@ -4,8 +4,11 @@
 
 # Newsdata.io PHP Client
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/newsdataapi/php-client/blob/main/LICENSE)
+[![Packagist Version](https://img.shields.io/packagist/v/newsdataio/newsdataapi?logo=packagist&color=f28d1a)](https://packagist.org/packages/newsdataio/newsdataapi)
+[![CI](https://img.shields.io/github/actions/workflow/status/newsdataapi/php-client/ci.yml?branch=main&logo=github&label=CI)](https://github.com/newsdataapi/php-client/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/newsdataapi/php-client/branch/main/graph/badge.svg)](https://codecov.io/gh/newsdataapi/php-client)
 [![PHP](https://img.shields.io/badge/php-%5E7.3%20%7C%7C%20%5E8.0-green?logo=php)](https://github.com/newsdataapi/php-client/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/newsdataapi/php-client/blob/main/LICENSE)
 
 </div>
 

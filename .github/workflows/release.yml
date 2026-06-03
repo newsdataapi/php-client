@@ -1,0 +1,44 @@
+name: Release
+
+# When a version tag is pushed: create a GitHub Release with auto-generated
+# notes. Packagist auto-syncs from the GitHub webhook on tag push, so there
+# is no separate "publish to Packagist" step. The optional Packagist-API
+# notify step runs only when PACKAGIST_USER / PACKAGIST_TOKEN secrets are
+# configured, useful as a belt-and-braces force-refresh.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Packagist (optional)
+        env:
+          PACKAGIST_USER: ${{ secrets.PACKAGIST_USER }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: |
+          if [ -z "$PACKAGIST_USER" ] || [ -z "$PACKAGIST_TOKEN" ]; then
+            echo "Packagist credentials not configured — skipping (the webhook handles updates)."
+            exit 0
+          fi
+          curl -fXPOST -H 'content-type:application/json' \
+            "https://packagist.org/api/update-package?username=$PACKAGIST_USER&apiToken=$PACKAGIST_TOKEN" \
+            -d "{\"repository\":{\"url\":\"https://github.com/${GITHUB_REPOSITORY}\"}}"
