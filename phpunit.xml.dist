@@ -6,4 +6,20 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+
+    <!-- PHPUnit 10 needs a configured source set to produce coverage; without
+         it the runner warns "No filter is configured" and exits non-zero in
+         CI. PHPUnit 9 reads the same block under <coverage>; the <source>
+         element is the 10+ canonical name. -->
+    <source>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+    </source>
+
+    <coverage>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+    </coverage>
 </phpunit>
