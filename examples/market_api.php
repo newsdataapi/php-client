@@ -9,7 +9,7 @@ use NewsdataIO\NewsdataApi;
 $newsdataApiObj = new NewsdataApi(NEWSDATA_API_KEY);
 
 $data = [
-    'q'      => 'apple',
+    'q'      => "apple",
     'symbol' => 'AAPL',
 ];
 
