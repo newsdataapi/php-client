@@ -6,3 +6,4 @@ composer.lock
 .php-cs-fixer.cache
 coverage.xml
 .phpstan.cache/
+
