@@ -9,6 +9,7 @@
 [![codecov](https://codecov.io/gh/newsdataapi/php-client/branch/main/graph/badge.svg)](https://codecov.io/gh/newsdataapi/php-client)
 [![PHP](https://img.shields.io/badge/php-%5E7.3%20%7C%7C%20%5E8.0-green?logo=php)](https://github.com/newsdataapi/php-client/blob/main/LICENSE)
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/newsdataapi/php-client/blob/main/LICENSE)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-85EA2D)](https://newsdata.io/openapi.json)
 
 </div>
 
@@ -77,7 +78,8 @@ By default the response is decoded to objects; call
 
 Each `$data` value may be a single string or an array of strings. Parameter
 names are case-insensitive. See the
-[Newsdata.io documentation](https://newsdata.io/documentation) for the full
+[Newsdata.io documentation](https://newsdata.io/documentation) — or the
+[OpenAPI 3.1 spec](https://newsdata.io/openapi.json) — for the full
 parameter reference per endpoint.
 
 ```php
