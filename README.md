@@ -83,7 +83,7 @@ names are case-insensitive. See the
 parameter reference per endpoint.
 
 ```php
-$client->get_market_news(['q' => 'apple', 'symbol' => 'AAPL']);
+$client->get_market_news(['q' => 'apple', 'market_id' => 'AAPL']);
 
 $client->get_news_count([
     'from_date' => '2024-01-01',
