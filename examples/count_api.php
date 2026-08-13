@@ -18,7 +18,7 @@ $base = [
 try {
     $news   = $newsdataApiObj->get_news_count($base + ['q' => 'election']);
     $crypto = $newsdataApiObj->get_crypto_count($base + ['coin' => 'btc']);
-    $market = $newsdataApiObj->get_market_count($base + ['symbol' => 'AAPL']);
+    $market = $newsdataApiObj->get_market_count($base + ['market_id' => 'AAPL']);
 
     var_dump($news, $crypto, $market);
 } catch (NewsdataException $e) {

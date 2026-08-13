@@ -9,8 +9,8 @@ use NewsdataIO\NewsdataApi;
 $newsdataApiObj = new NewsdataApi(NEWSDATA_API_KEY);
 
 $data = [
-    'q'      => 'apple',
-    'symbol' => 'AAPL',
+    'q'         => 'apple',
+    'market_id' => 'AAPL',
 ];
 
 try {
