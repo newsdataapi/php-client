@@ -16,7 +16,9 @@
 The official PHP client for the [Newsdata.io](https://newsdata.io) REST API. It
 wraps every endpoint (`latest`, `archive`, `sources`, `crypto`, `market`,
 `count`, `crypto/count`, `market/count`) with client-side parameter validation,
-automatic retries with exponential backoff, and a typed exception hierarchy.
+automatic retries with exponential backoff, and a typed exception hierarchy. It
+also covers the real-time WebSocket service: register, list, and delete queries,
+and stream the matching news as it is published.
 
 ## Requirements
 
@@ -75,6 +77,9 @@ By default the response is decoded to objects; call
 | `get_news_count($data)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `get_crypto_count($data)` | `/1/crypto/count` | Aggregate crypto counts (requires dates) |
 | `get_market_count($data)` | `/1/market/count` | Aggregate market counts (requires dates) |
+| `get_websocket_register($data)` | `/1/websocket/register` | Register a real-time query |
+| `get_websocket_fetch()` | `/1/websocket/fetch` | List registered queries |
+| `get_websocket_delete($id)` | `/1/websocket/delete` | Delete a registered query |
 
 Each `$data` value may be a single string or an array of strings. Parameter
 names are case-insensitive. See the
@@ -118,6 +123,100 @@ Before any request is sent, parameters are validated and normalized. A
 Booleans (`full_content`, `image`, `video`, `removeduplicate`) are coerced to
 `1` / `0`.
 
+## Real-time news (WebSocket)
+
+Register a query first — the returned `registration_id` identifies it from then on:
+
+```php
+use NewsdataIO\NewsdataApi;
+use NewsdataIO\NewsdataWebSocket;
+
+$api = new NewsdataApi('YOUR_API_KEY');
+$ws  = new NewsdataWebSocket($api);
+
+$registered = $ws->register(['q' => 'bitcoin', 'language' => 'en']);
+$registrationId = $registered->results->registration_id;
+```
+
+`register()` takes the familiar filter names (`q`, `country`, `language`,
+`domain`, …) — no date or paging filters, since a registered query matches news
+as it is published. Registering an identical query twice throws
+`NewsdataAPIError` with status 409; the existing id is in the response body.
+`fetch()` lists every registered query and `delete($id)` removes one. All three
+also exist directly on the API object as `get_websocket_register()`,
+`get_websocket_fetch()` and `get_websocket_delete()`.
+
+Then stream. `stream()` is a generator — `break` out of the loop to stop, and
+the connection closes for you:
+
+```php
+foreach ($ws->stream($registrationId) as $response) {
+    foreach ($response->results as $article) {
+        echo $article->title, ' - ', $article->link, PHP_EOL;
+    }
+}
+```
+
+Transient drops (network errors, server restarts, abnormal closes) are
+reconnected automatically with a capped exponential backoff. Pass
+`'reconnect' => false` to stop on the first disconnect instead. A permanent
+rejection — bad API key or unknown
+`registration_id`, exhausted API credits, or too many simultaneous devices — throws
+`NewsdataWebSocketAuthError` and is **not** retried.
+
+The server always accepts the handshake and then closes with code **1008** when
+the connection is refused, carrying one of three reasons: `invalid credentials
+or registration not found`, `api limit reached`, or `device limit reached` (more
+than 5 devices on one `registration_id`). Every other close code — including
+`1013` (`send timeout`, meaning the client read too slowly) — is transient and
+reconnects.
+
+**Each delivered article consumes 1 API credit per connected device.**
+
+Catch it like any other client error:
+
+```php
+use NewsdataIO\Exception\NewsdataWebSocketAuthError;
+use NewsdataIO\Exception\NewsdataWebSocketError;
+
+try {
+    foreach ($ws->stream($registrationId) as $response) {
+        // ...
+    }
+} catch (NewsdataWebSocketAuthError $e) {
+    echo 'rejected: ', $e->getMessage(), PHP_EOL;
+} catch (NewsdataWebSocketError $e) {
+    echo 'stream error: ', $e->getMessage(), PHP_EOL;
+}
+```
+
+All connection options are optional:
+
+```php
+$ws = new NewsdataWebSocket($api, [
+    'baseUrl'           => 'wss://ws.newsdata.io/ws/event', // staging / self-hosted
+    'reconnect'         => true,   // auto-reconnect on transient drops; default true
+    'reconnectDelay'    => 1.0,    // seconds before the first reconnect (doubles each retry)
+    'reconnectDelayMax' => 30.0,   // cap on the reconnect delay
+    'handshakeTimeout'  => 10,     // seconds to wait for the opening handshake
+]);
+```
+
+> **Streaming needs one extra package.** PHP has no WebSocket client in core, so
+> `stream()` requires [`phrity/websocket`](https://packagist.org/packages/phrity/websocket)
+> (PHP 8.1+):
+>
+> ```bash
+> composer require phrity/websocket
+> ```
+>
+> It is an **optional** dependency — everything else in this SDK, including the
+> three `websocket/*` management endpoints above, works without it on every
+> supported PHP version. `stream()` throws a `NewsdataWebSocketError` telling
+> you to install it if it is missing.
+
+Runnable example: [`examples/websocket.php`](examples/websocket.php).
+
 ## Error handling
 
 ```php
@@ -151,7 +250,9 @@ NewsdataException                       (catch-all base)
 │   ├── NewsdataAuthError               (401 / 403)
 │   ├── NewsdataRateLimitError          (429; getRetryAfter())
 │   └── NewsdataServerError             (5xx)
-└── NewsdataNetworkError                (cURL / connectivity)
+├── NewsdataNetworkError                (cURL / connectivity)
+└── NewsdataWebSocketError              (real-time stream)
+    └── NewsdataWebSocketAuthError      (policy-violation close 1008)
 ```
 
 ## Configuration
