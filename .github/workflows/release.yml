@@ -11,6 +11,13 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+'
 
+# One publish per ref at a time. GitHub can deliver a tag push more than once;
+# without this, two runs race and the registry rejects the loser as a duplicate
+# coordinate (seen on the v0.2.0 Maven Central release).
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
