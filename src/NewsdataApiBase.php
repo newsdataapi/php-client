@@ -86,7 +86,7 @@ class NewsdataApiBase
         }
         $params = ParamValidator::validate($endpoint, $data);
         $baseUrl = Constants::BASE_URL . Constants::ENDPOINTS[$endpoint];
-        return $this->execute($baseUrl, $params);
+        return $this->execute($baseUrl, $params, $endpoint);
     }
 
     /**
@@ -97,7 +97,7 @@ class NewsdataApiBase
      *
      * @return array|object
      */
-    private function execute(string $baseUrl, array $params)
+    private function execute(string $baseUrl, array $params, string $endpoint = '')
     {
         $this->response = new Response();
         $this->response->setApiPath($baseUrl);
@@ -108,12 +108,13 @@ class NewsdataApiBase
         $logUrl = Util::redactApiKey($fullUrl);
 
         $attempts = max(1, $this->maxRetries);
+        $method = Constants::ENDPOINT_METHODS[$endpoint] ?? 'GET';
 
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
-            $this->log('info', "GET {$logUrl} (attempt {$attempt}/{$attempts})");
+            $this->log('info', "{$method} {$logUrl} (attempt {$attempt}/{$attempts})");
 
             try {
-                [$status, $headers, $rawBody] = $this->httpGet($fullUrl);
+                [$status, $headers, $rawBody] = $this->httpGet($fullUrl, $method);
             } catch (NewsdataNetworkError $e) {
                 if ($attempt >= $attempts) {
                     throw $e;
@@ -140,7 +141,7 @@ class NewsdataApiBase
             }
             $this->response->setBody($body);
 
-            if ($status === 200 && $this->isSuccessBody($body)) {
+            if ($status === 200 && $this->isSuccessBody($body, $endpoint)) {
                 return $body;
             }
 
@@ -206,10 +207,10 @@ class NewsdataApiBase
      *
      * @throws NewsdataNetworkError
      */
-    private function httpGet(string $url): array
+    private function httpGet(string $url, string $method = 'GET'): array
     {
         $ch = curl_init();
-        curl_setopt_array($ch, $this->curlOptions($url));
+        curl_setopt_array($ch, $this->curlOptions($url, $method));
 
         $raw = curl_exec($ch);
 
@@ -238,10 +239,11 @@ class NewsdataApiBase
      *
      * @return array
      */
-    private function curlOptions(string $url): array
+    private function curlOptions(string $url, string $method = 'GET'): array
     {
         $options = [
             CURLOPT_URL            => $url,
+            CURLOPT_CUSTOMREQUEST  => $method,
             CURLOPT_HTTPHEADER     => ['Accept: application/json'],
             CURLOPT_CONNECTTIMEOUT => $this->connectionTimeout,
             CURLOPT_TIMEOUT        => $this->timeout,
@@ -305,16 +307,20 @@ class NewsdataApiBase
      *
      * @param mixed $body
      */
-    private function isSuccessBody($body): bool
+    private function isSuccessBody($body, string $endpoint = ''): bool
     {
+        // The websocket management endpoints may answer without `results`.
+        $resultsOptional = in_array($endpoint, Constants::RESULTS_OPTIONAL, true);
+
         if (is_array($body)) {
             return ($body['status'] ?? null) === 'success'
-                && array_key_exists('results', $body)
-                && $body['results'] !== null;
+                && ($resultsOptional
+                    || (array_key_exists('results', $body) && $body['results'] !== null));
         }
         if ($body instanceof \stdClass) {
             return isset($body->status) && $body->status === 'success'
-                && property_exists($body, 'results') && $body->results !== null;
+                && ($resultsOptional
+                    || (property_exists($body, 'results') && $body->results !== null));
         }
         return false;
     }

@@ -60,7 +60,44 @@ final class Constants
         'count'        => 'count',
         'crypto_count' => 'crypto/count',
         'market_count' => 'market/count',
+        'websocket_register' => 'websocket/register',
+        'websocket_fetch'    => 'websocket/fetch',
+        'websocket_delete'   => 'websocket/delete',
     ];
+
+    /** HTTP method per endpoint; anything absent is a GET. */
+    public const ENDPOINT_METHODS = [
+        'websocket_register' => 'POST',
+        'websocket_delete'   => 'DELETE',
+    ];
+
+    /**
+     * Endpoints whose success envelope may carry no `results` field, so they
+     * are exempt from the results-present check applied to the news endpoints.
+     */
+    public const RESULTS_OPTIONAL = [
+        'websocket_register',
+        'websocket_fetch',
+        'websocket_delete',
+    ];
+
+    /** Real-time WebSocket endpoint. */
+    public const WS_BASE_URL = 'wss://ws.newsdata.io/ws/event';
+
+    /** The feed a registered query matches against. */
+    public const WS_NEWS_TYPE = 'latest';
+
+    /** Close code the server uses for a permanent connection rejection. */
+    public const WS_POLICY_VIOLATION = 1008;
+
+    /** Seconds before the first reconnect; doubles after each failure. */
+    public const WS_RECONNECT_DELAY = 1.0;
+
+    /** Upper bound on the reconnect delay, in seconds. */
+    public const WS_RECONNECT_DELAY_MAX = 30.0;
+
+    /** Bound on the opening handshake, in seconds. */
+    public const WS_HANDSHAKE_TIMEOUT = 10;
 
     /** Endpoints that require both `from_date` and `to_date`. */
     public const REQUIRES_DATE_RANGE = ['count', 'crypto_count', 'market_count'];
@@ -145,5 +182,18 @@ final class Constants
             'market_id', 'prioritydomain', 'page', 'sentiment', 'removeduplicate', 'size',
             'sort', 'tag', 'interval', 'creator', 'datatype', 'sentiment_score',
         ],
+        // Real-time query registration. No date/paging filters — a registered
+        // query matches news as it is published. `news_type` is set by
+        // get_websocket_register(), not by the caller.
+        'websocket_register' => [
+            'q', 'qintitle', 'qinmeta', 'country', 'excludecountry', 'category',
+            'excludecategory', 'language', 'excludelanguage', 'domain', 'domainurl',
+            'excludedomain', 'prioritydomain', 'timezone', 'full_content', 'image',
+            'video', 'removeduplicate', 'tag', 'sentiment', 'sentiment_score',
+            'region', 'organization', 'creator', 'datatype', 'excludefield',
+            'news_type',
+        ],
+        'websocket_fetch'  => [],
+        'websocket_delete' => ['registration_id'],
     ];
 }

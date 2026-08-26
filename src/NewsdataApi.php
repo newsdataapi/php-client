@@ -186,4 +186,74 @@ class NewsdataApi extends NewsdataApiBase
     {
         return $this->request('market_count', $data);
     }
+
+    // ---- real-time query management ---------------------------------------
+
+    /**
+     * Register a real-time WebSocket query. POST /1/websocket/register.
+     *
+     * Takes the familiar filter names (`q`, `country`, `language`, `domain`, …);
+     * no date or paging filters apply, since a registered query matches news as
+     * it is published. The new query's id is at `results.registration_id` —
+     * pass it to {@see NewsdataWebSocket::stream()}.
+     *
+     * Registering an identical query twice throws
+     * {@see Exception\NewsdataAPIError} with status 409; the existing id is in
+     * the response body.
+     *
+     * @param array $data
+     *
+     * @return array|object
+     */
+    public function get_websocket_register(array $data = [])
+    {
+        $data['news_type'] = Constants::WS_NEWS_TYPE;
+        return $this->request('websocket_register', $data);
+    }
+
+    /**
+     * List the account's registered real-time queries.
+     * GET /1/websocket/fetch. One entry per query at `results.queries`.
+     *
+     * @return array|object
+     */
+    public function get_websocket_fetch()
+    {
+        return $this->request('websocket_fetch', []);
+    }
+
+    /**
+     * Delete a registered real-time query. DELETE /1/websocket/delete.
+     *
+     * @param string $registrationId
+     *
+     * @return array|object
+     */
+    public function get_websocket_delete(string $registrationId)
+    {
+        if ($registrationId === '') {
+            throw new Exception\NewsdataValidationError(
+                'registrationId must be a non-empty string',
+                'registration_id'
+            );
+        }
+        return $this->request('websocket_delete', ['registration_id' => $registrationId]);
+    }
+
+    /** The API key, for the WebSocket handshake URL. @internal */
+    public function apiKeyForWebSocket(): string
+    {
+        return $this->apiKey;
+    }
+
+    /**
+     * Whether responses decode to arrays rather than objects; the WebSocket
+     * layer decodes frames the same way.
+     *
+     * @internal
+     */
+    public function isDecodingJsonAsArray(): bool
+    {
+        return $this->decodeJsonAsArray;
+    }
 }

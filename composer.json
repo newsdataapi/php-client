@@ -1,8 +1,20 @@
 {
   "name": "newsdataio/newsdataapi",
   "type": "library",
-  "description": "Official PHP client (SDK) for the Newsdata.io News API — fetch real-time, historical, crypto, and stock-market news via REST with validation, retries, and error handling.",
-  "keywords": ["news", "newsdata", "latest", "archive", "crypto", "market", "sources", "count", "historical", "api", "sdk"],
+  "description": "Official PHP client (SDK) for the Newsdata.io News API \u2014 fetch real-time, historical, crypto, and stock-market news via REST with validation, retries, and error handling.",
+  "keywords": [
+    "news",
+    "newsdata",
+    "latest",
+    "archive",
+    "crypto",
+    "market",
+    "sources",
+    "count",
+    "historical",
+    "api",
+    "sdk"
+  ],
   "license": "MIT",
   "homepage": "https://newsdata.io",
   "authors": [
@@ -28,7 +40,8 @@
     "phpunit/phpunit": "^9 || ^10"
   },
   "suggest": {
-    "psr/log": "Allows attaching a PSR-3 logger via NewsdataApi::setLogger()"
+    "psr/log": "Allows attaching a PSR-3 logger via NewsdataApi::setLogger()",
+    "phrity/websocket": "Required for real-time streaming via NewsdataWebSocket::stream() (PHP 8.1+)"
   },
   "autoload": {
     "psr-4": {
