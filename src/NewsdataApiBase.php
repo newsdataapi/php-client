@@ -149,7 +149,9 @@ class NewsdataApiBase
                 $retryAfter = $this->parseRetryAfter(
                     isset($headers['retry_after']) ? $headers['retry_after'] : null
                 );
-                if ($attempt >= $attempts) {
+                // A 429 covers a burst limit, a rate limit, and exhausted API
+                // credits. Only the first two are worth retrying.
+                if ($this->quotaExhausted($body) || $attempt >= $attempts) {
                     throw new NewsdataRateLimitError(
                         $this->errorMessage($body, $status),
                         429,
@@ -348,6 +350,31 @@ class NewsdataApiBase
      * @param mixed $body
      * @param int   $status
      */
+    /**
+     * Whether a 429 body carries an error code meaning the account is out of
+     * API credits, as opposed to a transient rate limit.
+     *
+     * @param mixed $body
+     */
+    private function quotaExhausted($body): bool
+    {
+        $results = null;
+        if (is_array($body)) {
+            $results = $body['results'] ?? null;
+        } elseif ($body instanceof \stdClass) {
+            $results = $body->results ?? null;
+        }
+
+        $code = null;
+        if (is_array($results)) {
+            $code = $results['code'] ?? null;
+        } elseif ($results instanceof \stdClass) {
+            $code = $results->code ?? null;
+        }
+
+        return is_string($code) && in_array($code, Constants::QUOTA_EXHAUSTED_CODES, true);
+    }
+
     private function errorMessage($body, int $status): string
     {
         $arr = $this->toArray($body);
