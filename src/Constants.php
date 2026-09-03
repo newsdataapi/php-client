@@ -99,6 +99,18 @@ final class Constants
     /** Bound on the opening handshake, in seconds. */
     public const WS_HANDSHAKE_TIMEOUT = 10;
 
+    /**
+     * Error codes on a 429 meaning the account's API credits are exhausted
+     * rather than a transient rate limit. These are never retried — waiting
+     * out the backoff cannot conjure more credits.
+     *
+     * `ApiLimitExceeded` is the documented code (see the ErrorCode enum in
+     * https://newsdata.io/openapi.json); `ApiKeyLimitExceeded` is accepted too
+     * because the API has been observed to send it and the spec is not
+     * exhaustive.
+     */
+    public const QUOTA_EXHAUSTED_CODES = ['ApiLimitExceeded', 'ApiKeyLimitExceeded'];
+
     /** Endpoints that require both `from_date` and `to_date`. */
     public const REQUIRES_DATE_RANGE = ['count', 'crypto_count', 'market_count'];
 
