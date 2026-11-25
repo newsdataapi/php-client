@@ -151,8 +151,9 @@ class NewsdataWebSocket
     /**
      * Connect and yield each response for $registrationId as it arrives.
      *
-     * Responses have the familiar `status` / `totalResults` / `results` shape,
-     * decoded the same way the REST methods decode theirs.
+     * Responses have `status`, `total_results` and `results` keys, and their
+     * articles carry the same v2 layout as {@see NewsdataApi::get_news()}
+     * results. They are decoded the same way the REST methods decode theirs.
      *
      * @param string $registrationId
      *

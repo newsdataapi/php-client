@@ -66,7 +66,7 @@ echo "streaming {$registrationId} — Ctrl-C to stop\n";
 try {
     foreach ($ws->stream($registrationId) as $response) {
         foreach ($response->results as $article) {
-            echo $article->title, ' - ', $article->link, PHP_EOL;
+            echo $article->title, ' - ', $article->url, PHP_EOL;
         }
     }
 } catch (NewsdataWebSocketAuthError $e) {

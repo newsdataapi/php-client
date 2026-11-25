@@ -10,6 +10,7 @@ use NewsdataIO\Exception\NewsdataWebSocketAuthError;
 use NewsdataIO\Exception\NewsdataWebSocketError;
 use NewsdataIO\NewsdataApi;
 use NewsdataIO\NewsdataWebSocket;
+use NewsdataIO\ParamValidator;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -99,8 +100,8 @@ class NewsdataWebSocketTest extends TestCase
     {
         return json_encode([
             'status' => 'success',
-            'totalResults' => 1,
-            'results' => [['article_id' => $id, 'title' => $title]],
+            'total_results' => 1,
+            'results' => [['id' => $id, 'title' => $title]],
         ]);
     }
 
@@ -256,6 +257,56 @@ class NewsdataWebSocketTest extends TestCase
         $this->assertNotContains('size', $filters);
     }
 
+    // ---- API version 2 ----------------------------------------------------
+    // The real-time service moved to API version 2: the management endpoints
+    // sit under /2/, news_type names the v2 news feed, and a registration
+    // takes the v2 filter vocabulary only.
+
+    public function testNewsTypeNamesTheV2NewsFeed(): void
+    {
+        $this->assertSame('news', Constants::WS_NEWS_TYPE);
+    }
+
+    public function testRegisterTakesTheV2FilterNames(): void
+    {
+        $filters = Constants::FILTERS['websocket_register'];
+        foreach ([
+            'q_in_title', 'q_in_meta', 'exclude_country', 'exclude_category',
+            'exclude_language', 'source_url', 'exclude_source_url',
+            'source_priority', 'content', 'remove_duplicate', 'exclude_field',
+        ] as $name) {
+            $this->assertContains($name, $filters, $name);
+        }
+    }
+
+    public function testRegisterNoLongerTakesTheV1FilterNames(): void
+    {
+        $filters = Constants::FILTERS['websocket_register'];
+        foreach ([
+            'qintitle', 'qinmeta', 'excludecountry', 'excludecategory',
+            'excludelanguage', 'domain', 'domainurl', 'excludedomain',
+            'excludedomainurl', 'prioritydomain', 'full_content',
+            'removeduplicate', 'excludefield',
+        ] as $name) {
+            $this->assertNotContains($name, $filters, $name);
+        }
+    }
+
+    public function testRegisterRejectsAV1FilterName(): void
+    {
+        $this->expectException(NewsdataValidationError::class);
+        $this->api()->get_websocket_register(['qintitle' => 'pizza']);
+    }
+
+    public function testRegisterKeepsTheV2SourceUrlMutexGroup(): void
+    {
+        $this->expectException(NewsdataValidationError::class);
+        ParamValidator::validate('websocket_register', [
+            'source_url' => 'a.com',
+            'exclude_source_url' => 'b.com',
+        ]);
+    }
+
     public function testWebsocketEndpointsUseTheRightHttpMethods(): void
     {
         $this->assertSame('POST', Constants::ENDPOINT_METHODS['websocket_register']);
@@ -266,9 +317,10 @@ class NewsdataWebSocketTest extends TestCase
 
     public function testWebsocketEndpointPathsAreRegistered(): void
     {
-        $this->assertSame('websocket/register', Constants::ENDPOINTS['websocket_register']);
-        $this->assertSame('websocket/fetch', Constants::ENDPOINTS['websocket_fetch']);
-        $this->assertSame('websocket/delete', Constants::ENDPOINTS['websocket_delete']);
+        // The endpoint path carries the API version; real-time is v2 only.
+        $this->assertSame('2/websocket/register', Constants::ENDPOINTS['websocket_register']);
+        $this->assertSame('2/websocket/fetch', Constants::ENDPOINTS['websocket_fetch']);
+        $this->assertSame('2/websocket/delete', Constants::ENDPOINTS['websocket_delete']);
     }
 
     public function testDeleteRejectsEmptyRegistrationId(): void

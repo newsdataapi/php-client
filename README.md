@@ -67,6 +67,52 @@ By default the response is decoded to objects; call
 
 ## Endpoints
 
+The API has two versions. v2 is the current one; the v1 methods keep working
+unchanged.
+
+### v2
+
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| `get_news($data)` | `/2/news` | Latest news, or historical with `from_date` / `to_date` |
+| `get_market($data)` | `/2/market` | Market / financial news |
+| `get_crypto($data)` | `/2/crypto` | Cryptocurrency news |
+| `get_sources($data)` | `/2/sources` | Available sources |
+| `get_count_news($data)` | `/2/count/news` | Aggregate news counts |
+| `get_count_market($data)` | `/2/count/market` | Aggregate market counts |
+| `get_count_crypto($data)` | `/2/count/crypto` | Aggregate crypto counts |
+| `get_websocket_register($data)` | `/2/websocket/register` | Register a real-time query |
+| `get_websocket_fetch()` | `/2/websocket/fetch` | List registered queries |
+| `get_websocket_delete($id)` | `/2/websocket/delete` | Delete a registered query |
+
+v2 renames the filter vocabulary to snake_case and folds the four domain
+filters into two:
+
+| v1 | v2 |
+|----|----|
+| `qInTitle`, `qInMeta` | `q_in_title`, `q_in_meta` |
+| `excludecountry`, `excludecategory`, `excludelanguage` | `exclude_country`, `exclude_category`, `exclude_language` |
+| `domain`, `domainurl`, `excludedomain`, `excludedomainurl` | `source_url`, `exclude_source_url` |
+| `prioritydomain` | `source_priority` |
+| `full_content` | `content` |
+| `removeduplicate`, `excludefield` | `remove_duplicate`, `exclude_field` |
+
+`coin` and `market_id` keep their names. v2 responses carry `total_results`
+and `next_page` where v1 carries `totalResults` and `nextPage`.
+
+```php
+$response = $client->get_news([
+    'q_in_title' => 'tesla',
+    'source_url' => 'bbc.com',
+    'content'    => true,
+]);
+```
+
+There is no `/2/archive` — `get_news()` covers historical news through
+`from_date` / `to_date`.
+
+### v1
+
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | `get_latest_news($data)` | `/1/latest` | Real-time news |
@@ -77,9 +123,8 @@ By default the response is decoded to objects; call
 | `get_news_count($data)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `get_crypto_count($data)` | `/1/crypto/count` | Aggregate crypto counts (requires dates) |
 | `get_market_count($data)` | `/1/market/count` | Aggregate market counts (requires dates) |
-| `get_websocket_register($data)` | `/1/websocket/register` | Register a real-time query |
-| `get_websocket_fetch()` | `/1/websocket/fetch` | List registered queries |
-| `get_websocket_delete($id)` | `/1/websocket/delete` | Delete a registered query |
+
+The real-time service is v2 only — there are no v1 WebSocket methods.
 
 Each `$data` value may be a single string or an array of strings. Parameter
 names are case-insensitive. See the
@@ -125,7 +170,8 @@ Booleans (`full_content`, `image`, `video`, `removeduplicate`) are coerced to
 
 ## Real-time news (WebSocket)
 
-Register a query first — the returned `registration_id` identifies it from then on:
+The real-time service is part of API v2. Register a query first — the returned
+`registration_id` identifies it from then on:
 
 ```php
 use NewsdataIO\NewsdataApi;
@@ -138,21 +184,34 @@ $registered = $ws->register(['q' => 'bitcoin', 'language' => 'en']);
 $registrationId = $registered->results->registration_id;
 ```
 
-`register()` takes the familiar filter names (`q`, `country`, `language`,
-`domain`, …) — no date or paging filters, since a registered query matches news
-as it is published. Registering an identical query twice throws
+`register()` takes the same filter names as `get_news()` (`q`, `q_in_title`,
+`country`, `exclude_country`, `source_url`, `content`, `exclude_field`,
+`timezone`, …) — the date, paging and sorting filters, `id` and `url` don't
+apply to a standing query. Registering an identical query twice throws
 `NewsdataAPIError` with status 409; the existing id is in the response body.
-`fetch()` lists every registered query and `delete($id)` removes one. All three
-also exist directly on the API object as `get_websocket_register()`,
-`get_websocket_fetch()` and `get_websocket_delete()`.
 
-Then stream. `stream()` is a generator — `break` out of the loop to stop, and
-the connection closes for you:
+`fetch()` lists every registered query: `results` is a list with one entry per
+query, carrying its `registration_id`, the filters it was registered with
+(`query`), how many devices are streaming it now (`active_clients`) and when
+one last connected (`last_used`, UTC). `delete($id)` removes one. Once every
+registration the plan allows is in use, registering another throws a 429
+`NewsdataRateLimitError` carrying the code `RegistrationLimitExceeded`; it is
+not retried, since only deleting a registration frees a slot.
+
+All three also exist directly on the API object as
+`get_websocket_register()`, `get_websocket_fetch()` and
+`get_websocket_delete()`.
+
+Then stream. Each response has `status`, `total_results` and `results` keys,
+and its articles carry the same v2 layout as `get_news()` results (`id`, `url`,
+`published_at`, …, with related fields grouped under `media`, `source` and
+`ai`). `stream()` is a generator — `break` out of the loop to stop, and the
+connection closes for you:
 
 ```php
 foreach ($ws->stream($registrationId) as $response) {
     foreach ($response->results as $article) {
-        echo $article->title, ' - ', $article->link, PHP_EOL;
+        echo $article->title, ' - ', $article->url, PHP_EOL;
     }
 }
 ```
@@ -249,6 +308,10 @@ NewsdataException                       (catch-all base)
 ├── NewsdataAPIError                    (getStatusCode(), getResponseBody())
 │   ├── NewsdataAuthError               (401 / 403)
 │   ├── NewsdataRateLimitError          (429; getRetryAfter())
+│   │   ├── NewsdataApiLimitExceededError     (account credits gone)
+│   │   └── NewsdataApiKeyLimitExceededError  (this key's cap gone)
+│   │   (RegistrationLimitExceeded stays on NewsdataRateLimitError —
+│   │    real-time registration slots, not credits)
 │   └── NewsdataServerError             (5xx)
 ├── NewsdataNetworkError                (cURL / connectivity)
 └── NewsdataWebSocketError              (real-time stream)
@@ -274,6 +337,15 @@ Retries cover network errors, HTTP 429, and 5xx responses. 429 honors the
 `Retry-After` header (integer seconds or HTTP-date); otherwise backoff is
 exponential (`2s → 4s → 8s …`, capped). Auth and other 4xx errors are never
 retried.
+
+A 429 that waiting cannot fix is never retried.
+`NewsdataApiLimitExceededError` means the account's whole credit pool is
+exhausted, `NewsdataApiKeyLimitExceededError` means this one key hit its own
+cap while the account may still have credits; both extend
+`NewsdataRateLimitError`, so existing `catch` blocks keep working.
+`RegistrationLimitExceeded` is also never retried, but keeps the plain
+`NewsdataRateLimitError` class — it is about real-time registration slots, not
+credits, and is fixed by deleting a registration.
 
 Response metadata for the most recent call:
 

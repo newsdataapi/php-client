@@ -149,10 +149,19 @@ class NewsdataApiBase
                 $retryAfter = $this->parseRetryAfter(
                     isset($headers['retry_after']) ? $headers['retry_after'] : null
                 );
+                if (isset($headers['x_apikey_limit_remaining'])) {
+                    $this->log(
+                        'warning',
+                        'X-APIKEY-Limit-Remaining: ' . $headers['x_apikey_limit_remaining']
+                    );
+                }
                 // A 429 covers a burst limit, a rate limit, and exhausted API
                 // credits. Only the first two are worth retrying.
-                if ($this->quotaExhausted($body) || $attempt >= $attempts) {
-                    throw new NewsdataRateLimitError(
+                $quotaError = $this->quotaExhaustedError($body);
+                if ($quotaError !== null || $attempt >= $attempts) {
+                    $errorClass = $quotaError !== null ? $quotaError : NewsdataRateLimitError::class;
+
+                    throw new $errorClass(
                         $this->errorMessage($body, $status),
                         429,
                         $this->toArray($body),
@@ -351,12 +360,15 @@ class NewsdataApiBase
      * @param int   $status
      */
     /**
-     * Whether a 429 body carries an error code meaning the account is out of
-     * API credits, as opposed to a transient rate limit.
+     * The exception class for a 429 whose body says the API credits are
+     * exhausted, or null when the 429 is a transient rate limit worth
+     * retrying.
      *
      * @param mixed $body
+     *
+     * @return class-string<NewsdataRateLimitError>|null
      */
-    private function quotaExhausted($body): bool
+    private function quotaExhaustedError($body): ?string
     {
         $results = null;
         if (is_array($body)) {
@@ -372,7 +384,13 @@ class NewsdataApiBase
             $code = $results->code ?? null;
         }
 
-        return is_string($code) && in_array($code, Constants::QUOTA_EXHAUSTED_CODES, true);
+        if (!is_string($code) || !in_array($code, Constants::QUOTA_EXHAUSTED_CODES, true)) {
+            return null;
+        }
+
+        // Every code in QUOTA_EXHAUSTED_CODES has an entry in the map; the
+        // QuotaExhaustedTest pins that invariant.
+        return Constants::QUOTA_EXHAUSTED_ERRORS[$code];
     }
 
     private function errorMessage($body, int $status): string
