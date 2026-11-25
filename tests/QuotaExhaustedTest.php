@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace NewsdataIO\Tests;
 
 use NewsdataIO\Constants;
+use NewsdataIO\Exception\NewsdataApiKeyLimitExceededError;
+use NewsdataIO\Exception\NewsdataApiLimitExceededError;
+use NewsdataIO\Exception\NewsdataRateLimitError;
 use PHPUnit\Framework\TestCase;
 
 /**
- * A 429 covers three cases: a burst limit, a rate limit, and exhausted API
- * credits. Only the first two are worth retrying — waiting out the backoff
- * cannot conjure more credits.
+ * A 429 covers a burst limit, a rate limit, exhausted API credits, and a full
+ * set of real-time registrations. Only the first two are worth retrying —
+ * waiting out the backoff cannot conjure credits or free a registration slot.
  *
  * The retry loop itself needs a live socket, so these pin the code set and the
  * classification helper rather than driving cURL.
@@ -23,7 +26,10 @@ class QuotaExhaustedTest extends TestCase
         // variant is accepted too because the spec is not exhaustive.
         $this->assertContains('ApiLimitExceeded', Constants::QUOTA_EXHAUSTED_CODES);
         $this->assertContains('ApiKeyLimitExceeded', Constants::QUOTA_EXHAUSTED_CODES);
-        $this->assertCount(2, Constants::QUOTA_EXHAUSTED_CODES);
+        // Not a credit code: every real-time registration the plan allows is
+        // in use, and only deleting one frees a slot.
+        $this->assertContains('RegistrationLimitExceeded', Constants::QUOTA_EXHAUSTED_CODES);
+        $this->assertCount(3, Constants::QUOTA_EXHAUSTED_CODES);
     }
 
     public function testTransientRateLimitCodesAreNotTreatedAsQuota(): void
@@ -34,50 +40,83 @@ class QuotaExhaustedTest extends TestCase
         }
     }
 
+    public function testEachQuotaCodeMapsToItsOwnErrorClass(): void
+    {
+        // The two credit codes mean the credits are gone, but the remedy
+        // differs, so each gets its own class. Both subclass
+        // NewsdataRateLimitError, so code written against the old single class
+        // keeps working.
+        $this->assertSame(
+            NewsdataApiLimitExceededError::class,
+            Constants::QUOTA_EXHAUSTED_ERRORS['ApiLimitExceeded']
+        );
+        $this->assertSame(
+            NewsdataApiKeyLimitExceededError::class,
+            Constants::QUOTA_EXHAUSTED_ERRORS['ApiKeyLimitExceeded']
+        );
+        $this->assertTrue(
+            is_subclass_of(NewsdataApiLimitExceededError::class, NewsdataRateLimitError::class)
+        );
+        $this->assertTrue(
+            is_subclass_of(NewsdataApiKeyLimitExceededError::class, NewsdataRateLimitError::class)
+        );
+        // Registration slots are not credits, so this one keeps the base class.
+        $this->assertSame(
+            NewsdataRateLimitError::class,
+            Constants::QUOTA_EXHAUSTED_ERRORS['RegistrationLimitExceeded']
+        );
+        // Every code in the set must map to a class, or the throw would fall
+        // back to the base class and lose the distinction.
+        foreach (Constants::QUOTA_EXHAUSTED_CODES as $code) {
+            $this->assertArrayHasKey($code, Constants::QUOTA_EXHAUSTED_ERRORS);
+        }
+    }
+
     /**
      * The classification helper is private; exercise it through reflection so
      * the body-shape handling (array and object decoding) is covered.
      *
      * @dataProvider quotaBodies
      *
-     * @param mixed $body
+     * @param mixed       $body
+     * @param string|null $expected
      */
-    public function testQuotaExhaustedDetection($body, bool $expected): void
+    public function testQuotaExhaustedDetection($body, ?string $expected): void
     {
         $api = new \NewsdataIO\NewsdataApi('key');
-        $method = new \ReflectionMethod($api, 'quotaExhausted');
+        $method = new \ReflectionMethod($api, 'quotaExhaustedError');
         $method->setAccessible(true);
 
         $this->assertSame($expected, $method->invoke($api, $body));
     }
 
-    /** @return array<string,array{0:mixed,1:bool}> */
+    /** @return array<string,array{0:mixed,1:string|null}> */
     public static function quotaBodies(): array
     {
         return [
             'array, quota code' => [
                 ['status' => 'error', 'results' => ['code' => 'ApiLimitExceeded']],
-                true,
+                NewsdataApiLimitExceededError::class,
             ],
             'array, key quota code' => [
                 ['status' => 'error', 'results' => ['code' => 'ApiKeyLimitExceeded']],
-                true,
+                NewsdataApiKeyLimitExceededError::class,
             ],
             'array, transient code' => [
                 ['status' => 'error', 'results' => ['code' => 'RateLimitExceeded']],
-                false,
+                null,
             ],
             'object, quota code' => [
                 (object) ['status' => 'error', 'results' => (object) ['code' => 'ApiLimitExceeded']],
-                true,
+                NewsdataApiLimitExceededError::class,
             ],
             'object, transient code' => [
                 (object) ['status' => 'error', 'results' => (object) ['code' => 'TooManyRequests']],
-                false,
+                null,
             ],
-            'no code at all' => [['status' => 'error', 'results' => []], false],
-            'no results key' => [['status' => 'error'], false],
-            'not a body' => ['plain string', false],
+            'no code at all' => [['status' => 'error', 'results' => []], null],
+            'no results key' => [['status' => 'error'], null],
+            'not a body' => ['plain string', null],
         ];
     }
 }
